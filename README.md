@@ -45,19 +45,19 @@ codex-session
 codex-session list
 
 # 精确切换（同邮箱多身份时自动提示选择）
-codex-session switch hicancan000@gmail.com
+codex-session switch user@example.com
 
 # 按 email + plan 切换
-codex-session switch hicancan000@gmail.com:free
+codex-session switch user@example.com:free
 
 # 按 email + account_id 前缀切换
-codex-session switch hicancan000@gmail.com:f51bce00
+codex-session switch user@example.com:f51bce00
 
 # 按 account_id 前缀全局搜索切换
 codex-session switch f51bce00
 
 # 模糊匹配 email
-codex-session switch hihui
+codex-session switch user
 
 # 保存当前 session 并删除 auth.json，准备登录新号
 codex-session logout
