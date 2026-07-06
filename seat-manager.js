@@ -69,7 +69,16 @@ async function switchSeat(targetEmail) {
             process.exitCode = 1;
             return;
         }
-        console.error("[Success] Target page context acquired. Executing seat reallocation...");
+        console.error("[Success] Target page context acquired. Waiting for page to fully load (avoiding 30s timeout)...");
+        
+        page.setDefaultTimeout(120000); // Prevent Puppeteer from throwing 30s timeouts during slow navigations
+        try {
+            await page.waitForFunction("document.readyState === 'complete'", { timeout: 60000 });
+        } catch (waitErr) {
+            console.error("[Warning] Wait for document.readyState timed out, proceeding anyway...");
+        }
+
+        console.error("[Success] Page ready. Executing seat reallocation...");
 
         const result = await page.evaluate(async (workspaceId, protectedId, targetEmail) => {
             try {
@@ -89,15 +98,17 @@ async function switchSeat(targetEmail) {
                     "content-type": "application/json"
                 };
 
-                // 2. Members List (Pagination support)
+                // 2. Members List (Pagination support with safety cap)
                 let members = [];
                 let offset = 0;
-                while (true) {
+                let loops = 0;
+                while (loops < 20) { // Max 2000 users safety cap
                     const usersRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users?offset=${offset}&limit=100`, { headers });
                     const usersData = await usersRes.json();
                     if (!usersData.items || usersData.items.length === 0) break;
                     members.push(...usersData.items);
                     offset += 100;
+                    loops++;
                 }
                 
                 let targetUser = members.find(u => u.email === targetEmail);
