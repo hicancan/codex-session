@@ -47,7 +47,7 @@ function Get-OrgTitle($authClaim) {
 
 function Get-AccountInfo($authPath) {
     try {
-        $data = Get-Content $authPath -Raw | ConvertFrom-Json
+        $data = [System.IO.File]::ReadAllText($authPath) | ConvertFrom-Json
         $jwt = Decode-JwtPayload $data.tokens.id_token
         $auth = $jwt.'https://api.openai.com/auth'
         $subStart = $auth.chatgpt_subscription_active_start
@@ -70,7 +70,7 @@ function Get-AccountInfo($authPath) {
             Path      = $authPath
         }
     } catch {
-        return $null
+        throw "[Fatal Error] State synchronization failed: Unable to parse JSON sequence at ($authPath). Details: $($_.Exception.Message)"
     }
 }
 
@@ -84,14 +84,13 @@ function Get-CurrentAccount {
 }
 
 function Get-SavedAccounts {
-    $accounts = @()
-    if (-not (Test-Path $SessionsDir)) { return $accounts }
+    if (-not (Test-Path $SessionsDir)) { return @() }
 
-    foreach ($emailDir in Get-ChildItem $SessionsDir -Directory -ErrorAction SilentlyContinue) {
+    $accounts = foreach ($emailDir in Get-ChildItem $SessionsDir -Directory -ErrorAction SilentlyContinue) {
         foreach ($acctDir in Get-ChildItem $emailDir.FullName -Directory -ErrorAction SilentlyContinue) {
             $authFile = Join-Path $acctDir.FullName "auth.json"
             if (Test-Path $authFile) {
-                try { $accounts += Get-AccountInfo $authFile } catch {}
+                Get-AccountInfo $authFile
             }
         }
     }
@@ -104,14 +103,31 @@ function Get-SavedAccounts {
 
 function Save-Current {
     if (-not (Test-Path $CodexAuth)) { return $null }
-    $info = Get-AccountInfo $CodexAuth
-    $acctId = if ($info.AccountId) { $info.AccountId } else { "_unknown" }
-    $safeEmail = $info.Email -replace '[\\/:\*\?"<>\|]', '_'
-    $safeAcctId = $acctId -replace '[\\/:\*\?"<>\|]', '_'
-    $targetDir = Join-Path $SessionsDir (Join-Path $safeEmail $safeAcctId)
-    New-Item -ItemType Directory -Force $targetDir | Out-Null
-    Copy-Item $CodexAuth (Join-Path $targetDir "auth.json") -Force
-    return $info
+    
+    $mutex = $null
+    $lockAcquired = $false
+    $createdNew = $false
+    try {
+        $mutex = [System.Threading.Mutex]::new($false, "Local\CodexSessionMutex", [ref]$createdNew)
+        $lockAcquired = $mutex.WaitOne(15000)
+        if (-not $lockAcquired) { throw "[Fatal Error] Failed to acquire local lock for state mutation." }
+
+        $info = Get-AccountInfo $CodexAuth
+        $acctId = if ($info.AccountId) { $info.AccountId } else { "_unknown" }
+        $safeEmail = $info.Email -replace '[\\/:\*\?"<>\|]', '_'
+        $safeAcctId = $acctId -replace '[\\/:\*\?"<>\|]', '_'
+        $targetDir = Join-Path $SessionsDir (Join-Path $safeEmail $safeAcctId)
+        New-Item -ItemType Directory -Force $targetDir | Out-Null
+        
+        $tmpFile = Join-Path $targetDir "auth.tmp.json"
+        Copy-Item $CodexAuth $tmpFile -Force
+        Move-Item $tmpFile (Join-Path $targetDir "auth.json") -Force
+        
+        return $info
+    } finally {
+        if ($lockAcquired) { $mutex.ReleaseMutex() }
+        if ($mutex) { $mutex.Dispose() }
+    }
 }
 
 # ============================================================================
@@ -158,9 +174,8 @@ function Invoke-List {
     }
 
     $curKey = if ($current) { "$($current.Email)|$($current.AccountId)" } else { "" }
-    $rows = @()
-    foreach ($a in $accounts) {
-        $rows += [PSCustomObject]@{
+    $rows = foreach ($a in $accounts) {
+        [PSCustomObject]@{
             A        = if ("$($a.Email)|$($a.AccountId)" -eq $curKey) { "*" } else { "" }
             Email    = $a.Email
             Name     = $a.Name
@@ -287,24 +302,45 @@ function Invoke-Switch($matcher) {
     # ---- INJECT DYNAMIC SEAT SCHEDULER ----
     Write-Host ">>> [Dynamic Seat Manager] Checking and allocating ChatGPT seat for $($targetAccount.Email)..." -ForegroundColor Cyan
     $nodeScript = Join-Path $ProjectDir "seat-manager.js"
+    
+    # Pre-flight check: Can we write to the target CodexAuth file?
+    try {
+        $testStream = [System.IO.File]::OpenWrite($CodexAuth)
+        $testStream.Close()
+    } catch {
+        throw "[Fatal Error] Pre-flight check failed: Cannot write to $CodexAuth."
+    }
+
     if (Test-Path $nodeScript) {
         $OutputEncoding = [System.Text.Encoding]::UTF8
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        try {
-            $seatResult = & node $nodeScript "$($targetAccount.Email)" 2>&1
-            Write-Host $seatResult -ForegroundColor Yellow
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "[Error] Seat reallocation interrupted. Local credential file remains unmodified to guarantee state consistency." -ForegroundColor Red
-                exit 1
-            }
-        } catch {
-            Write-Host "[!] Failed to execute seat-manager script. Aborting." -ForegroundColor Red
-            exit 1
+        $seatResult = & node $nodeScript "$($targetAccount.Email)"
+        Write-Host $seatResult -ForegroundColor Yellow
+        if ($LASTEXITCODE -ne 0) {
+            throw "[Fatal Error] Seat reallocation interrupted. Local credential file remains unmodified to guarantee state consistency."
         }
     }
     # ---------------------------------------
 
-    Copy-Item $targetAccount.Path $CodexAuth -Force
+    $mutex = $null
+    $lockAcquired = $false
+    $createdNew = $false
+    try {
+        $mutex = [System.Threading.Mutex]::new($false, "Local\CodexSessionMutex", [ref]$createdNew)
+        $lockAcquired = $mutex.WaitOne(15000)
+        if (-not $lockAcquired) { throw "[Fatal Error] Failed to acquire local lock for state mutation." }
+
+        $tmpFile = "$CodexAuth.tmp"
+        Copy-Item $targetAccount.Path $tmpFile -Force
+        Move-Item $tmpFile $CodexAuth -Force
+    } catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        exit 1
+    } finally {
+        if ($lockAcquired) { $mutex.ReleaseMutex() }
+        if ($mutex) { $mutex.Dispose() }
+    }
+
     Write-Output "Switched to: $($targetAccount.Email)  [$($targetAccount.Plan)]  ($($targetAccount.AccountId))"
 }
 

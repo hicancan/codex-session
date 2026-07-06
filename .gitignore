@@ -12,3 +12,9 @@
 
 # Config with sensitive IDs
 /config.json
+
+# Defense in depth: strictly ignore credential and temp files globally
+auth.json
+credential.bin
+meta.json
+*.tmp

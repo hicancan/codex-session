@@ -1,3 +1,4 @@
+"use strict";
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
@@ -14,6 +15,7 @@ const PROTECTED_USER_ID = config.PROTECTED_USER_ID;
 
 async function switchSeat(targetEmail) {
     let browser;
+    let page = null;
     let connected = false;
     
     // 1. 等待并连接 Chrome 逻辑
@@ -31,7 +33,9 @@ async function switchSeat(targetEmail) {
                 const { exec } = require('child_process');
                 const os = require('os');
                 const desktopPath = path.join(os.homedir(), 'Desktop', 'Google Chrome (API模式).lnk');
-                exec(`start "" "${desktopPath}"`);
+                exec(`start "" "${desktopPath}"`, (err) => {
+                    if (err) console.error("[Error] Failed to invoke Chrome:", err.message);
+                });
                 console.error("[Polling] Waiting for CDP port 9222 to bind (Timeout: 15s)...");
             }
             await new Promise(r => setTimeout(r, 3000));
@@ -46,7 +50,6 @@ async function switchSeat(targetEmail) {
 
     try {
         // 2. 等待管理页面打开逻辑
-        let page = null;
         for (let i = 0; i < 30; i++) {
             const pages = await browser.pages();
             page = pages.find(p => p.url().includes('chatgpt.com/admin/members'));
@@ -70,8 +73,13 @@ async function switchSeat(targetEmail) {
 
         const result = await page.evaluate(async (workspaceId, protectedId, targetEmail) => {
             try {
+                const fetchWithTimeout = async (url, options = {}) => {
+                    options.signal = AbortSignal.timeout(15000);
+                    return await fetch(url, options);
+                };
+
                 // 1. Session Token
-                const sessionRes = await fetch('/api/auth/session');
+                const sessionRes = await fetchWithTimeout('/api/auth/session');
                 const session = await sessionRes.json();
                 if (!session.accessToken) return { success: false, error: "Not logged in to ChatGPT" };
                 const token = session.accessToken;
@@ -82,7 +90,7 @@ async function switchSeat(targetEmail) {
                 };
 
                 // 2. Members List
-                const usersRes = await fetch(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users?offset=0&limit=50`, { headers });
+                const usersRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users?offset=0&limit=50`, { headers });
                 const usersData = await usersRes.json();
                 if (!usersData.items) return { success: false, error: "Failed to fetch members" };
                 
@@ -101,15 +109,19 @@ async function switchSeat(targetEmail) {
                 );
 
                 if (userToDemote) {
-                    await fetch(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users/${userToDemote.id}`, {
+                    const demoteRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users/${userToDemote.id}`, {
                         method: "PATCH",
                         headers,
                         body: JSON.stringify({ seat_type: "usage_based" })
                     });
+                    if (!demoteRes.ok) {
+                        const demoteErr = await demoteRes.text().catch(() => '');
+                        throw new Error(`[Fatal Error] Seat demotion failed with HTTP ${demoteRes.status}: ${demoteErr}`);
+                    }
                 }
 
                 // 4. Upgrade Target
-                const upgradeRes = await fetch(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users/${targetUser.id}`, {
+                const upgradeRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users/${targetUser.id}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({ seat_type: "default" })
@@ -137,6 +149,13 @@ async function switchSeat(targetEmail) {
         console.error("执行席位漂移期间发生错误:", err.message);
         process.exitCode = 1;
     } finally {
+        if (page) {
+            try {
+                await page.close();
+            } catch (e) {
+                console.error("[Fatal Error] Failed to gracefully close target page:", e.message);
+            }
+        }
         if (browser) browser.disconnect();
     }
 }
