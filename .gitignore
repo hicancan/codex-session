@@ -1,2 +1,14 @@
 # Session data — contains tokens, never commit
 /sessions/
+
+# Node dependencies
+/node_modules/
+
+# Chrome API Sandbox Profile - CONTAINS CRITICAL COOKIES AND CACHE, NEVER COMMIT
+/.chrome-profile/
+
+# Test scripts
+/test-*.js
+
+# Config with sensitive IDs
+/config.json

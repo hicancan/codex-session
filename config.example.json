@@ -1,0 +1,5 @@
+{
+    "WORKSPACE_ID": "your-workspace-id-here",
+    "PROTECTED_USER_ID": "user-id-to-protect",
+    "PROTECTED_USER_EMAIL": "admin@example.com"
+}
