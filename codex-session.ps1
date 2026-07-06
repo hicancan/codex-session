@@ -102,7 +102,9 @@ function Save-Current {
     if (-not (Test-Path $CodexAuth)) { return $null }
     $info = Get-AccountInfo $CodexAuth
     $acctId = if ($info.AccountId) { $info.AccountId } else { "_unknown" }
-    $targetDir = Join-Path $SessionsDir (Join-Path $info.Email $acctId)
+    $safeEmail = $info.Email -replace '[\\/:\*\?"<>\|]', '_'
+    $safeAcctId = $acctId -replace '[\\/:\*\?"<>\|]', '_'
+    $targetDir = Join-Path $SessionsDir (Join-Path $safeEmail $safeAcctId)
     New-Item -ItemType Directory -Force $targetDir | Out-Null
     Copy-Item $CodexAuth (Join-Path $targetDir "auth.json") -Force
     return $info
@@ -251,7 +253,8 @@ function Invoke-Switch($matcher) {
 
     # Match by fuzzy email
     if (-not $targetAccount) {
-        $emailFuzzy = @($accounts | Where-Object { $_.Email -like "*$matcher*" })
+        $escaped = [WildcardPattern]::Escape($matcher)
+        $emailFuzzy = @($accounts | Where-Object { $_.Email -like "*$escaped*" })
         if ($emailFuzzy.Count -eq 1) {
             $targetAccount = $emailFuzzy[0]
         } elseif ($emailFuzzy.Count -gt 1) {
@@ -282,7 +285,7 @@ function Invoke-Switch($matcher) {
     $nodeScript = Join-Path $ProjectDir "seat-manager.js"
     if (Test-Path $nodeScript) {
         try {
-            $seatResult = & node $nodeScript $($targetAccount.Email)
+            $seatResult = & node $nodeScript "$($targetAccount.Email)" 2>&1
             Write-Host $seatResult -ForegroundColor Yellow
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "[!] Seat drift failed (Cloudflare or Chrome disconnected). Aborting local switch to maintain consistency." -ForegroundColor Red
