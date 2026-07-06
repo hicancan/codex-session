@@ -149,13 +149,6 @@ async function switchSeat(targetEmail) {
         console.error("执行席位漂移期间发生错误:", err.message);
         process.exitCode = 1;
     } finally {
-        if (page) {
-            try {
-                await page.close();
-            } catch (e) {
-                console.error("[Fatal Error] Failed to gracefully close target page:", e.message);
-            }
-        }
         if (browser) browser.disconnect();
     }
 }
