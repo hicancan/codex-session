@@ -24,7 +24,9 @@ async function switchSeat(targetEmail) {
         console.error("[!] 未检测到浏览器运行，已自动为您启动 Chrome (API模式)。");
         console.error("    请等待浏览器完全开启后，重新执行本命令。");
         const { exec } = require('child_process');
-        exec('start "" "C:\\Users\\yunca\\Desktop\\Google Chrome (API模式).lnk"');
+        const os = require('os');
+        const desktopPath = path.join(os.homedir(), 'Desktop', 'Google Chrome (API模式).lnk');
+        exec(`start "" "${desktopPath}"`);
         process.exitCode = 1;
         return;
     }

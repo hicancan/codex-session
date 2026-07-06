@@ -46,27 +46,31 @@ function Get-OrgTitle($authClaim) {
 }
 
 function Get-AccountInfo($authPath) {
-    $data = Get-Content $authPath -Raw | ConvertFrom-Json
-    $jwt = Decode-JwtPayload $data.tokens.id_token
-    $auth = $jwt.'https://api.openai.com/auth'
-    $subStart = $auth.chatgpt_subscription_active_start
-    $subUntil = $auth.chatgpt_subscription_active_until
-    $refresh = if ($data.last_refresh -match '^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})') {
-        "$($Matches[1]) $($Matches[2])"
-    } else { $data.last_refresh }
-    return [PSCustomObject]@{
-        Email     = $jwt.email
-        Name      = $jwt.name
-        Plan      = $auth.chatgpt_plan_type
-        Provider  = $jwt.auth_provider
-        UserId    = $auth.chatgpt_user_id
-        AccountId = $data.tokens.account_id
-        OrgId     = Get-OrgId $auth
-        OrgTitle  = Get-OrgTitle $auth
-        SubStart  = if ($subStart) { ($subStart -split 'T')[0] } else { "?" }
-        SubUntil  = if ($subUntil) { ($subUntil -split 'T')[0] } else { "?" }
-        Refresh   = $refresh
-        Path      = $authPath
+    try {
+        $data = Get-Content $authPath -Raw | ConvertFrom-Json
+        $jwt = Decode-JwtPayload $data.tokens.id_token
+        $auth = $jwt.'https://api.openai.com/auth'
+        $subStart = $auth.chatgpt_subscription_active_start
+        $subUntil = $auth.chatgpt_subscription_active_until
+        $refresh = if ($data.last_refresh -match '^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})') {
+            "$($Matches[1]) $($Matches[2])"
+        } else { $data.last_refresh }
+        return [PSCustomObject]@{
+            Email     = $jwt.email
+            Name      = $jwt.name
+            Plan      = $auth.chatgpt_plan_type
+            Provider  = $jwt.auth_provider
+            UserId    = $auth.chatgpt_user_id
+            AccountId = $data.tokens.account_id
+            OrgId     = Get-OrgId $auth
+            OrgTitle  = Get-OrgTitle $auth
+            SubStart  = if ($subStart) { ($subStart -split 'T')[0] } else { "?" }
+            SubUntil  = if ($subUntil) { ($subUntil -split 'T')[0] } else { "?" }
+            Refresh   = $refresh
+            Path      = $authPath
+        }
+    } catch {
+        return $null
     }
 }
 
