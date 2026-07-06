@@ -288,11 +288,13 @@ function Invoke-Switch($matcher) {
     Write-Host ">>> [Dynamic Seat Manager] Checking and allocating ChatGPT seat for $($targetAccount.Email)..." -ForegroundColor Cyan
     $nodeScript = Join-Path $ProjectDir "seat-manager.js"
     if (Test-Path $nodeScript) {
+        $OutputEncoding = [System.Text.Encoding]::UTF8
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
         try {
             $seatResult = & node $nodeScript "$($targetAccount.Email)" 2>&1
             Write-Host $seatResult -ForegroundColor Yellow
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "[!] Seat drift failed (Cloudflare or Chrome disconnected). Aborting local switch to maintain consistency." -ForegroundColor Red
+                Write-Host "[!] 席位漂移中断 (由于浏览器异常或未完成手动验证)。本地凭证保持不变。" -ForegroundColor Red
                 exit 1
             }
         } catch {

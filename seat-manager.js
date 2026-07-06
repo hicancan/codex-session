@@ -14,36 +14,59 @@ const PROTECTED_USER_ID = config.PROTECTED_USER_ID;
 
 async function switchSeat(targetEmail) {
     let browser;
-    try {
-        // 尝试连接到当前正在运行的 Chrome
-        browser = await puppeteer.connect({
-            browserURL: 'http://127.0.0.1:9222',
-            defaultViewport: null
-        });
-    } catch (err) {
-        console.error("[!] 未检测到浏览器运行，已自动为您启动 Chrome (API模式)。");
-        console.error("    请等待浏览器完全开启后，重新执行本命令。");
-        const { exec } = require('child_process');
-        const os = require('os');
-        const desktopPath = path.join(os.homedir(), 'Desktop', 'Google Chrome (API模式).lnk');
-        exec(`start "" "${desktopPath}"`);
+    let connected = false;
+    
+    // 1. 等待并连接 Chrome 逻辑
+    for (let i = 0; i < 5; i++) {
+        try {
+            browser = await puppeteer.connect({
+                browserURL: 'http://127.0.0.1:9222',
+                defaultViewport: null
+            });
+            connected = true;
+            break;
+        } catch (err) {
+            if (i === 0) {
+                console.error("[!] 未检测到浏览器运行，已自动为您启动 Chrome (API模式)...");
+                const { exec } = require('child_process');
+                const os = require('os');
+                const desktopPath = path.join(os.homedir(), 'Desktop', 'Google Chrome (API模式).lnk');
+                exec(`start "" "${desktopPath}"`);
+                console.error("    脚本将挂起等待浏览器完全开启 (最多等待 15 秒)...");
+            }
+            await new Promise(r => setTimeout(r, 3000));
+        }
+    }
+
+    if (!connected) {
+        console.error("[!] 浏览器启动超时或 9222 端口无法连接。本地凭证未切换。");
         process.exitCode = 1;
         return;
     }
 
     try {
-        // 寻找已经打开的 admin/members 标签页
-        const pages = await browser.pages();
-        let page = pages.find(p => p.url().includes('chatgpt.com/admin/members'));
+        // 2. 等待管理页面打开逻辑
+        let page = null;
+        for (let i = 0; i < 30; i++) {
+            const pages = await browser.pages();
+            page = pages.find(p => p.url().includes('chatgpt.com/admin/members'));
+            if (page) break;
+            
+            if (i === 0) {
+                console.error("\n[!] 浏览器运行正常，但【未打开】企业管理页面！");
+                console.error("    为规避 Cloudflare 拦截，请您手动在浏览器中新建标签页并访问:");
+                console.error("    👉 https://chatgpt.com/admin/members");
+                console.error("    等待页面加载完成 (最多等待 60 秒)...");
+            }
+            await new Promise(r => setTimeout(r, 2000));
+        }
         
         if (!page) {
-            console.error("[!] 检测到浏览器运行正常，但【未打开】企业管理页面！");
-            console.error("    为了避免 Cloudflare 风控拦截，请您手动在浏览器中新建标签页并访问:");
-            console.error("    👉 https://chatgpt.com/admin/members");
-            console.error("    等待页面加载完成后，再次执行本命令。");
+            console.error("[!] 等待超时。本地凭证未切换。");
             process.exitCode = 1;
             return;
         }
+        console.error(">>> 检测到合法环境！免死金牌已就绪，开始急速漂移...");
 
         const result = await page.evaluate(async (workspaceId, protectedId, targetEmail) => {
             try {
