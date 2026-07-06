@@ -89,12 +89,16 @@ async function switchSeat(targetEmail) {
                     "content-type": "application/json"
                 };
 
-                // 2. Members List
-                const usersRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users?offset=0&limit=50`, { headers });
-                const usersData = await usersRes.json();
-                if (!usersData.items) return { success: false, error: "Failed to fetch members" };
-                
-                const members = usersData.items;
+                // 2. Members List (Pagination support)
+                let members = [];
+                let offset = 0;
+                while (true) {
+                    const usersRes = await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users?offset=${offset}&limit=100`, { headers });
+                    const usersData = await usersRes.json();
+                    if (!usersData.items || usersData.items.length === 0) break;
+                    members.push(...usersData.items);
+                    offset += 100;
+                }
                 
                 let targetUser = members.find(u => u.email === targetEmail);
                 if (!targetUser) return { success: false, error: `Target email not found: ${targetEmail}` };
@@ -131,7 +135,21 @@ async function switchSeat(targetEmail) {
                     return { success: true, msg: `Seat Drift Complete: -> ${targetEmail}` };
                 } else {
                     const errText = await upgradeRes.text();
-                    return { success: false, error: `Upgrade failed: ${upgradeRes.status} - ${errText}` };
+                    
+                    // 5. ROLLBACK DEMOTION on Upgrade Failure
+                    if (userToDemote) {
+                        try {
+                            await fetchWithTimeout(`https://chatgpt.com/backend-api/accounts/${workspaceId}/users/${userToDemote.id}`, {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify({ seat_type: "default" })
+                            });
+                        } catch (rollbackErr) {
+                            return { success: false, error: `CRITICAL STATE LEAK: Upgrade failed (${upgradeRes.status}) AND Rollback failed: ${rollbackErr.message}` };
+                        }
+                    }
+                    
+                    return { success: false, error: `Upgrade failed: ${upgradeRes.status} - ${errText}. Demotion was safely rolled back.` };
                 }
 
             } catch (e) {

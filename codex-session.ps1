@@ -31,18 +31,11 @@ function Decode-JwtPayload($token) {
     } catch { return $null }
 }
 
-function Get-OrgId($authClaim) {
+function Get-OrgProperty($authClaim, $propName) {
     if (-not $authClaim.organizations) { return "?" }
     $orgs = $authClaim.organizations
-    if ($orgs -is [array]) { return $orgs[0].id }
-    return $orgs.id
-}
-
-function Get-OrgTitle($authClaim) {
-    if (-not $authClaim.organizations) { return "?" }
-    $orgs = $authClaim.organizations
-    if ($orgs -is [array]) { return $orgs[0].title }
-    return $orgs.title
+    if ($orgs -is [array]) { return $orgs[0].$propName }
+    return $orgs.$propName
 }
 
 function Get-AccountInfo($authPath) {
@@ -62,8 +55,8 @@ function Get-AccountInfo($authPath) {
             Provider  = $jwt.auth_provider
             UserId    = $auth.chatgpt_user_id
             AccountId = $data.tokens.account_id
-            OrgId     = Get-OrgId $auth
-            OrgTitle  = Get-OrgTitle $auth
+            OrgId     = Get-OrgProperty $auth "id"
+            OrgTitle  = Get-OrgProperty $auth "title"
             SubStart  = if ($subStart) { ($subStart -split 'T')[0] } else { "?" }
             SubUntil  = if ($subUntil) { ($subUntil -split 'T')[0] } else { "?" }
             Refresh   = $refresh
@@ -104,14 +97,7 @@ function Get-SavedAccounts {
 function Save-Current {
     if (-not (Test-Path $CodexAuth)) { return $null }
     
-    $mutex = $null
-    $lockAcquired = $false
-    $createdNew = $false
-    try {
-        $mutex = [System.Threading.Mutex]::new($false, "Local\CodexSessionMutex", [ref]$createdNew)
-        $lockAcquired = $mutex.WaitOne(15000)
-        if (-not $lockAcquired) { throw "[Fatal Error] Failed to acquire local lock for state mutation." }
-
+    Invoke-WithLock "Local\CodexSessionMutex" 15000 {
         $info = Get-AccountInfo $CodexAuth
         $acctId = if ($info.AccountId) { $info.AccountId } else { "_unknown" }
         $safeEmail = $info.Email -replace '[\\/:\*\?"<>\|]', '_'
@@ -124,9 +110,6 @@ function Save-Current {
         Move-Item $tmpFile (Join-Path $targetDir "auth.json") -Force
         
         return $info
-    } finally {
-        if ($lockAcquired) { $mutex.ReleaseMutex() }
-        if ($mutex) { $mutex.Dispose() }
     }
 }
 
@@ -322,23 +305,18 @@ function Invoke-Switch($matcher) {
     }
     # ---------------------------------------
 
-    $mutex = $null
-    $lockAcquired = $false
-    $createdNew = $false
-    try {
-        $mutex = [System.Threading.Mutex]::new($false, "Local\CodexSessionMutex", [ref]$createdNew)
-        $lockAcquired = $mutex.WaitOne(15000)
-        if (-not $lockAcquired) { throw "[Fatal Error] Failed to acquire local lock for state mutation." }
-
+    Invoke-WithLock "Local\CodexSessionMutex" 15000 {
         $tmpFile = "$CodexAuth.tmp"
         Copy-Item $targetAccount.Path $tmpFile -Force
         Move-Item $tmpFile $CodexAuth -Force
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Red
-        exit 1
-    } finally {
-        if ($lockAcquired) { $mutex.ReleaseMutex() }
-        if ($mutex) { $mutex.Dispose() }
+
+        Write-Output "[Info] Invoking JS seat drift routine..."
+        $process = Start-Process -FilePath "node" -ArgumentList "`"$PSScriptRoot\seat-manager.js`"", "`"$($targetAccount.Email)`"" -NoNewWindow -PassThru -Wait
+        
+        if ($process.ExitCode -ne 0) {
+            Write-Host "[Fatal Error] seat-manager.js failed with exit code $($process.ExitCode). The seat drift operation may have aborted or failed." -ForegroundColor Red
+            exit 1
+        }
     }
 
     Write-Output "Switched to: $($targetAccount.Email)  [$($targetAccount.Plan)]  ($($targetAccount.AccountId))"
@@ -401,6 +379,29 @@ function Invoke-Interactive {
         }
     }
 }
+
+# ============================================================================
+# Concurrency Management
+# ============================================================================
+
+function Invoke-WithLock([string]$MutexName, [int]$TimeoutMs, [scriptblock]$Action) {
+    $mutex = $null
+    $lockAcquired = $false
+    $createdNew = $false
+    try {
+        $mutex = [System.Threading.Mutex]::new($false, $MutexName, [ref]$createdNew)
+        $lockAcquired = $mutex.WaitOne($TimeoutMs)
+        if (-not $lockAcquired) { throw "[Fatal Error] Failed to acquire lock '$MutexName' within timeout." }
+        return & $Action
+    } finally {
+        if ($lockAcquired) { $mutex.ReleaseMutex() }
+        if ($mutex) { $mutex.Dispose() }
+    }
+}
+
+# ============================================================================
+# Auth Parsing
+# ============================================================================
 
 # ============================================================================
 # Main
