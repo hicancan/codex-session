@@ -27,19 +27,19 @@ async function switchSeat(targetEmail) {
             break;
         } catch (err) {
             if (i === 0) {
-                console.error("[!] 未检测到浏览器运行，已自动为您启动 Chrome (API模式)...");
+                console.error("[Info] Browser process not detected. Invoking Chrome shortcut...");
                 const { exec } = require('child_process');
                 const os = require('os');
                 const desktopPath = path.join(os.homedir(), 'Desktop', 'Google Chrome (API模式).lnk');
                 exec(`start "" "${desktopPath}"`);
-                console.error("    脚本将挂起等待浏览器完全开启 (最多等待 15 秒)...");
+                console.error("[Polling] Waiting for CDP port 9222 to bind (Timeout: 15s)...");
             }
             await new Promise(r => setTimeout(r, 3000));
         }
     }
 
     if (!connected) {
-        console.error("[!] 浏览器启动超时或 9222 端口无法连接。本地凭证未切换。");
+        console.error("[Error] Connection to Chrome CDP (port 9222) timed out. Aborting allocation.");
         process.exitCode = 1;
         return;
     }
@@ -53,20 +53,20 @@ async function switchSeat(targetEmail) {
             if (page) break;
             
             if (i === 0) {
-                console.error("\n[!] 浏览器运行正常，但【未打开】企业管理页面！");
-                console.error("    为规避 Cloudflare 拦截，请您手动在浏览器中新建标签页并访问:");
-                console.error("    👉 https://chatgpt.com/admin/members");
-                console.error("    等待页面加载完成 (最多等待 60 秒)...");
+                console.error("\n[Pending] Connected to CDP. Target administrative page context not found.");
+                console.error("[Action Required] To satisfy Cloudflare Turnstile constraints, please manually open a new tab and navigate to:");
+                console.error("URL: https://chatgpt.com/admin/members");
+                console.error("[Polling] Waiting for page context (Timeout: 60s)...");
             }
             await new Promise(r => setTimeout(r, 2000));
         }
         
         if (!page) {
-            console.error("[!] 等待超时。本地凭证未切换。");
+            console.error("[Error] Page context polling timed out. Aborting allocation.");
             process.exitCode = 1;
             return;
         }
-        console.error(">>> 检测到合法环境！免死金牌已就绪，开始急速漂移...");
+        console.error("[Success] Target page context acquired. Executing seat reallocation...");
 
         const result = await page.evaluate(async (workspaceId, protectedId, targetEmail) => {
             try {

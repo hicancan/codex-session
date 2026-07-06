@@ -294,7 +294,7 @@ function Invoke-Switch($matcher) {
             $seatResult = & node $nodeScript "$($targetAccount.Email)" 2>&1
             Write-Host $seatResult -ForegroundColor Yellow
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "[!] 席位漂移中断 (由于浏览器异常或未完成手动验证)。本地凭证保持不变。" -ForegroundColor Red
+                Write-Host "[Error] Seat reallocation interrupted. Local credential file remains unmodified to guarantee state consistency." -ForegroundColor Red
                 exit 1
             }
         } catch {
