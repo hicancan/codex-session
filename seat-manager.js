@@ -15,28 +15,34 @@ const PROTECTED_USER_ID = config.PROTECTED_USER_ID;
 async function switchSeat(targetEmail) {
     let browser;
     try {
-        // 连接到当前正在运行的 Chrome (需要 Chrome 启动时带 --remote-debugging-port=9222)
+        // 尝试连接到当前正在运行的 Chrome
         browser = await puppeteer.connect({
             browserURL: 'http://127.0.0.1:9222',
             defaultViewport: null
         });
+    } catch (err) {
+        console.error("[!] 未检测到浏览器运行，已自动为您启动 Chrome (API模式)。");
+        console.error("    请等待浏览器完全开启后，重新执行本命令。");
+        const { exec } = require('child_process');
+        exec('start "" "C:\\Users\\yunca\\Desktop\\Google Chrome (API模式).lnk"');
+        process.exitCode = 1;
+        return;
+    }
 
-        // 寻找一个 chatgpt.com 的标签页作为执行跳板
+    try {
+        // 寻找已经打开的 admin/members 标签页
         const pages = await browser.pages();
-        let page = pages.find(p => p.url().includes('chatgpt.com'));
+        let page = pages.find(p => p.url().includes('chatgpt.com/admin/members'));
         
         if (!page) {
-            page = await browser.newPage();
-            await page.goto('https://chatgpt.com/admin/members', { waitUntil: 'domcontentloaded' });
-            await new Promise(r => setTimeout(r, 2000)); // 等待 Cloudflare 盾或页面状态就绪
-        } else if (!page.url().includes('admin/members')) {
-            // 严格强制只在 admin/members 管理员页面发起 API 请求，完美拟态真实管理员操作
-            await page.goto('https://chatgpt.com/admin/members', { waitUntil: 'domcontentloaded' });
-            await new Promise(r => setTimeout(r, 1000));
+            console.error("[!] 检测到浏览器运行正常，但【未打开】企业管理页面！");
+            console.error("    为了避免 Cloudflare 风控拦截，请您手动在浏览器中新建标签页并访问:");
+            console.error("    👉 https://chatgpt.com/admin/members");
+            console.error("    等待页面加载完成后，再次执行本命令。");
+            process.exitCode = 1;
+            return;
         }
 
-        // console.log("Injecting scheduler logic...");
-        
         const result = await page.evaluate(async (workspaceId, protectedId, targetEmail) => {
             try {
                 // 1. Session Token
@@ -95,6 +101,7 @@ async function switchSeat(targetEmail) {
                 return { success: false, error: e.message };
             }
         }, WORKSPACE_ID, PROTECTED_USER_ID, targetEmail);
+        
         console.log(result);
         
         if (!result.success) {
@@ -102,7 +109,7 @@ async function switchSeat(targetEmail) {
         }
 
     } catch (err) {
-        console.error("连接 Chrome 失败，请确保 Chrome 已开启调试端口: --remote-debugging-port=9222", err.message);
+        console.error("执行席位漂移期间发生错误:", err.message);
         process.exitCode = 1;
     } finally {
         if (browser) browser.disconnect();
