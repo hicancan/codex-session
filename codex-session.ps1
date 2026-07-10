@@ -185,31 +185,6 @@ function Write-Table($rows, $columns) {
     }
 }
 
-function Write-CardList {
-    param([array]$Rows)
-    $esc = [char]27
-    
-    foreach ($row in $Rows) {
-        $isActive = ($row.A.Trim() -eq "*")
-        $mainColor = if ($isActive) { "$esc[38;5;48m" } else { "$esc[38;5;253m" }
-        $lblColor = "$esc[38;5;244m"
-        $valColor = "$esc[38;5;253m"
-        $planColor = if ($row.Plan -like "*business*") { "$esc[38;5;205m" } else { "$esc[38;5;220m" }
-        
-        $marker = if ($isActive) { "$esc[38;5;48m* $esc[0m" } else { "  " }
-        
-        Write-Output "  $esc[38;5;238m----------------------------------------------------------------------$esc[0m"
-        Write-Output "  $marker$mainColor$($row.Email)$esc[0m $lblColor($($row.AcctId))$esc[0m"
-        Write-Output "    $lblColor$('Name'.PadRight(10)):$esc[0m $valColor$($row.Name)$esc[0m"
-        Write-Output "    $lblColor$('Plan'.PadRight(10)):$esc[0m $planColor$($row.Plan)$esc[0m"
-        Write-Output "    $lblColor$('Provider'.PadRight(10)):$esc[0m $valColor$($row.Provider)$esc[0m"
-        Write-Output "    $lblColor$('UserId'.PadRight(10)):$esc[0m $valColor$($row.UserId)$esc[0m"
-        Write-Output "    $lblColor$('OrgId'.PadRight(10)):$esc[0m $valColor$($row.OrgId)  $lblColor(Title: $($row.OrgTitle))$esc[0m"
-        Write-Output "    $lblColor$('Sub'.PadRight(10)):$esc[0m $valColor$($row.Sub)$esc[0m"
-        Write-Output "    $lblColor$('Refresh'.PadRight(10)):$esc[0m $valColor$($row.Refresh)$esc[0m"
-    }
-    Write-Output "  $esc[38;5;238m----------------------------------------------------------------------$esc[0m"
-}
 
 # ============================================================================
 # Commands
@@ -241,14 +216,7 @@ function Invoke-List {
     }
 
     Write-Output ""
-    
-    # Responsive CLI Design: If the terminal is narrower than 150 columns, the table will wrap and look terrible.
-    # Fallback to the elegant Card View.
-    if ($Host.UI.RawUI.WindowSize.Width -lt 150) {
-        Write-CardList $rows
-    } else {
-        Write-Table $rows @("A", "Email", "Name", "Plan", "Provider", "UserId", "AcctId", "OrgId", "OrgTitle", "Sub", "Refresh")
-    }
+    Write-Table $rows @("A", "Email", "Name", "Plan", "Provider", "UserId", "AcctId", "OrgId", "OrgTitle", "Sub", "Refresh")
     
     Write-Output ""
 }
