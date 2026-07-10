@@ -97,7 +97,7 @@ function Get-SavedAccounts {
             }
         }
     }
-    return $accounts | Sort-Object AccountId, Email
+    return $accounts | Sort-Object AccountId, Name, Email
 }
 
 # ============================================================================
