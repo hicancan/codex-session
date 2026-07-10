@@ -45,9 +45,19 @@ function Get-AccountInfo($authPath) {
         $auth = $jwt.'https://api.openai.com/auth'
         $subStart = $auth.chatgpt_subscription_active_start
         $subUntil = $auth.chatgpt_subscription_active_until
-        $refresh = if ($data.last_refresh -match '^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})') {
+        
+        # Robust date parsing (handles both "YYYY-MM-DDTHH:MM..." and "MM/DD/YYYY HH:MM...")
+        $parseDate = {
+            param($d)
+            if (-not $d) { return "?" }
+            if ($d -match '^(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4})') { return $Matches[1] }
+            return ($d -split ' ')[0]
+        }
+        
+        $refresh = if ($data.last_refresh -match '^(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4})[T\s](\d{2}:\d{2})') {
             "$($Matches[1]) $($Matches[2])"
         } else { $data.last_refresh }
+
         return [PSCustomObject]@{
             Email     = $jwt.email
             Name      = $jwt.name
@@ -57,8 +67,8 @@ function Get-AccountInfo($authPath) {
             AccountId = $data.tokens.account_id
             OrgId     = Get-OrgProperty $auth "id"
             OrgTitle  = Get-OrgProperty $auth "title"
-            SubStart  = if ($subStart) { ($subStart -split 'T')[0] } else { "?" }
-            SubUntil  = if ($subUntil) { ($subUntil -split 'T')[0] } else { "?" }
+            SubStart  = &$parseDate $subStart
+            SubUntil  = &$parseDate $subUntil
             Refresh   = $refresh
             Path      = $authPath
         }
@@ -87,7 +97,7 @@ function Get-SavedAccounts {
             }
         }
     }
-    return $accounts | Sort-Object Email, AccountId
+    return $accounts | Sort-Object AccountId, Email
 }
 
 # ============================================================================
@@ -121,27 +131,84 @@ function Write-Table($rows, $columns) {
     if ($rows.Count -eq 0) { return }
     $widths = @{}
     foreach ($col in $columns) { $widths[$col] = $col.Length }
+    
+    $processedRows = @()
     foreach ($row in $rows) {
+        $pRow = @{}
         foreach ($col in $columns) {
             $val = if ($row.$col) { $row.$col.ToString() } else { "" }
+            # Truncate long UUIDs for cleaner display
+            if ($col -in @("UserId", "AcctId", "OrgId") -and $val.Length -gt 8) {
+                $val = $val.Substring(0, 8) + ".."
+            }
+            $pRow[$col] = $val
             if ($val.Length -gt $widths[$col]) { $widths[$col] = $val.Length }
         }
+        $processedRows += $pRow
     }
+    
+    $esc = [char]27
     $header = ""; $sep = ""
     foreach ($col in $columns) {
-        $header += $col.PadRight($widths[$col] + 2)
-        $sep += ("-" * $widths[$col]) + "  "
+        $displayName = if ($col -eq "A") { " " } else { $col }
+        $header += "$esc[38;5;14m" + $displayName.PadRight($widths[$col] + 2) + "$esc[0m"
+        $sep += "$esc[38;5;238m" + ("-" * $widths[$col]) + "  $esc[0m"
     }
-    Write-Output $header
-    Write-Output $sep
-    foreach ($row in $rows) {
+    Write-Output "  $header"
+    Write-Output "  $sep"
+    
+    foreach ($row in $processedRows) {
         $line = ""
+        $isActive = ($row["A"].Trim() -eq "*")
+        
         foreach ($col in $columns) {
-            $val = if ($row.$col) { $row.$col.ToString() } else { "" }
-            $line += $val.PadRight($widths[$col] + 2)
+            $val = $row[$col].PadRight($widths[$col] + 2)
+            
+            if ($isActive) {
+                $val = "$esc[38;5;48m" + $val + "$esc[0m" # Neon Green for active row
+            } elseif ($col -eq "A") {
+                $val = "$esc[38;5;240m" + $val + "$esc[0m"
+            } elseif ($col -in @("UserId", "AcctId", "OrgId", "Sub", "Refresh", "Provider")) {
+                $val = "$esc[38;5;244m" + $val + "$esc[0m" # Soft Gray for metadata
+            } elseif ($col -eq "Plan") {
+                if ($row[$col] -like "*business*") {
+                    $val = "$esc[38;5;205m" + $val + "$esc[0m" # Pink/Magenta for business
+                } else {
+                    $val = "$esc[38;5;220m" + $val + "$esc[0m" # Gold for team
+                }
+            } else {
+                $val = "$esc[38;5;253m" + $val + "$esc[0m" # Bright White for main text
+            }
+            $line += $val
         }
-        Write-Output $line
+        Write-Output "  $line"
     }
+}
+
+function Write-CardList {
+    param([array]$Rows)
+    $esc = [char]27
+    
+    foreach ($row in $Rows) {
+        $isActive = ($row.A.Trim() -eq "*")
+        $mainColor = if ($isActive) { "$esc[38;5;48m" } else { "$esc[38;5;253m" }
+        $lblColor = "$esc[38;5;244m"
+        $valColor = "$esc[38;5;253m"
+        $planColor = if ($row.Plan -like "*business*") { "$esc[38;5;205m" } else { "$esc[38;5;220m" }
+        
+        $marker = if ($isActive) { "$esc[38;5;48m* $esc[0m" } else { "  " }
+        
+        Write-Output "  $esc[38;5;238m----------------------------------------------------------------------$esc[0m"
+        Write-Output "  $marker$mainColor$($row.Email)$esc[0m $lblColor($($row.AcctId))$esc[0m"
+        Write-Output "    $lblColor$('Name'.PadRight(10)):$esc[0m $valColor$($row.Name)$esc[0m"
+        Write-Output "    $lblColor$('Plan'.PadRight(10)):$esc[0m $planColor$($row.Plan)$esc[0m"
+        Write-Output "    $lblColor$('Provider'.PadRight(10)):$esc[0m $valColor$($row.Provider)$esc[0m"
+        Write-Output "    $lblColor$('UserId'.PadRight(10)):$esc[0m $valColor$($row.UserId)$esc[0m"
+        Write-Output "    $lblColor$('OrgId'.PadRight(10)):$esc[0m $valColor$($row.OrgId)  $lblColor(Title: $($row.OrgTitle))$esc[0m"
+        Write-Output "    $lblColor$('Sub'.PadRight(10)):$esc[0m $valColor$($row.Sub)$esc[0m"
+        Write-Output "    $lblColor$('Refresh'.PadRight(10)):$esc[0m $valColor$($row.Refresh)$esc[0m"
+    }
+    Write-Output "  $esc[38;5;238m----------------------------------------------------------------------$esc[0m"
 }
 
 # ============================================================================
@@ -174,7 +241,15 @@ function Invoke-List {
     }
 
     Write-Output ""
-    Write-Table $rows @("A", "Email", "Name", "Plan", "Provider", "UserId", "AcctId", "OrgId", "OrgTitle", "Sub", "Refresh")
+    
+    # Responsive CLI Design: If the terminal is narrower than 150 columns, the table will wrap and look terrible.
+    # Fallback to the elegant Card View.
+    if ($Host.UI.RawUI.WindowSize.Width -lt 150) {
+        Write-CardList $rows
+    } else {
+        Write-Table $rows @("A", "Email", "Name", "Plan", "Provider", "UserId", "AcctId", "OrgId", "OrgTitle", "Sub", "Refresh")
+    }
+    
     Write-Output ""
 }
 
@@ -282,10 +357,6 @@ function Invoke-Switch($matcher) {
         exit 1
     }
 
-    # ---- INJECT DYNAMIC SEAT SCHEDULER ----
-    Write-Host ">>> [Dynamic Seat Manager] Checking and allocating ChatGPT seat for $($targetAccount.Email)..." -ForegroundColor Cyan
-    $nodeScript = Join-Path $ProjectDir "seat-manager.js"
-    
     # Pre-flight check: Can we write to the target CodexAuth file?
     try {
         $testStream = [System.IO.File]::OpenWrite($CodexAuth)
@@ -294,29 +365,10 @@ function Invoke-Switch($matcher) {
         throw "[Fatal Error] Pre-flight check failed: Cannot write to $CodexAuth."
     }
 
-    if (Test-Path $nodeScript) {
-        $OutputEncoding = [System.Text.Encoding]::UTF8
-        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        $seatResult = & node $nodeScript "$($targetAccount.Email)"
-        Write-Host $seatResult -ForegroundColor Yellow
-        if ($LASTEXITCODE -ne 0) {
-            throw "[Fatal Error] Seat reallocation interrupted. Local credential file remains unmodified to guarantee state consistency."
-        }
-    }
-    # ---------------------------------------
-
     Invoke-WithLock "Local\CodexSessionMutex" 15000 {
         $tmpFile = "$CodexAuth.tmp"
         Copy-Item $targetAccount.Path $tmpFile -Force
         Move-Item $tmpFile $CodexAuth -Force
-
-        Write-Output "[Info] Invoking JS seat drift routine..."
-        $process = Start-Process -FilePath "node" -ArgumentList "`"$PSScriptRoot\seat-manager.js`"", "`"$($targetAccount.Email)`"" -NoNewWindow -PassThru -Wait
-        
-        if ($process.ExitCode -ne 0) {
-            Write-Host "[Fatal Error] seat-manager.js failed with exit code $($process.ExitCode). The seat drift operation may have aborted or failed." -ForegroundColor Red
-            exit 1
-        }
     }
 
     Write-Output "Switched to: $($targetAccount.Email)  [$($targetAccount.Plan)]  ($($targetAccount.AccountId))"
@@ -343,7 +395,7 @@ function Invoke-Interactive {
 
     $curKey = if ($current) { "$($current.Email)|$($current.AccountId)" } else { "" }
 
-    # Determine if any email has multiple sessions (need plan column to disambiguate)
+    # Determine if any email has multiple sessions to disambiguate
     $needsPlanCol = $false
     $emailCounts = @{}
     foreach ($a in $accounts) {
@@ -352,18 +404,54 @@ function Invoke-Interactive {
         if ($emailCounts[$a.Email] -gt 1) { $needsPlanCol = $true }
     }
 
+    $esc = [char]27
     Write-Output ""
-    for ($i = 0; $i -lt $accounts.Count; $i++) {
-        $a = $accounts[$i]
-        $marker = if ("$($a.Email)|$($a.AccountId)" -eq $curKey) { "*" } else { " " }
-        $extra = if ($needsPlanCol) { "  $($a.Plan)" } else { "" }
-        Write-Output "  [$i] $marker $($a.Email)$extra"
+    
+    $maxEmailLen = 0
+    $maxPlanLen = 0
+    foreach ($a in $accounts) {
+        if ($a.Email.Length -gt $maxEmailLen) { $maxEmailLen = $a.Email.Length }
+        if ($a.Plan.Length -gt $maxPlanLen) { $maxPlanLen = $a.Plan.Length }
     }
 
-    Write-Output "`n  [l] Full detail table"
-    Write-Output "  [d] Logout (for new login)"
-    Write-Output "  [q] Quit"
-    $choice = Read-Host "`n>"
+    $lastTeam = ""
+    for ($i = 0; $i -lt $accounts.Count; $i++) {
+        $a = $accounts[$i]
+        
+        # Add visual separator between different teams
+        if ($lastTeam -ne "" -and $lastTeam -ne $a.AccountId) {
+            Write-Output "  $esc[38;5;238m----------------------------------------------------------------------$esc[0m"
+        }
+        $lastTeam = $a.AccountId
+        
+        $isActive = ("$($a.Email)|$($a.AccountId)" -eq $curKey)
+        $marker = if ($isActive) { "$esc[38;5;48m* " } else { "  " }
+        
+        $idxStr = "[$i]".PadRight(4)
+        
+        # Colorize Plan
+        $planColor = if ($a.Plan -like "*business*") { "$esc[38;5;205m" } else { "$esc[38;5;220m" }
+        
+        $extra = ""
+        if ($needsPlanCol) {
+            $shortId = if ($a.AccountId) { $a.AccountId.Substring(0, [math]::Min(8, $a.AccountId.Length)) } else { "?" }
+            # Use EXACT raw string without smart recognition, but pad for alignment
+            $extra = "  $planColor$($a.Plan.PadRight($maxPlanLen))$esc[0m  $esc[38;5;244m($shortId)$esc[0m"
+        }
+        
+        $paddedEmail = $a.Email.PadRight($maxEmailLen)
+        
+        if ($isActive) {
+            Write-Output "  $esc[38;5;240m$idxStr$esc[0m $marker$esc[38;5;48m$paddedEmail$esc[0m$extra"
+        } else {
+            Write-Output "  $esc[38;5;240m$idxStr$esc[0m $marker$esc[38;5;253m$paddedEmail$esc[0m$extra"
+        }
+    }
+
+    Write-Output "`n  $esc[38;5;14m[l]$esc[0m Full detail table"
+    Write-Output "  $esc[38;5;14m[d]$esc[0m Logout (for new login)"
+    Write-Output "  $esc[38;5;14m[q]$esc[0m Quit$esc[0m"
+    $choice = Read-Host "`n$esc[38;5;14m>$esc[0m"
 
     switch ($choice) {
         'q' { return }
