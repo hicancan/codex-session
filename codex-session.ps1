@@ -59,8 +59,10 @@ function Get-AccountInfo($authPath) {
         } else { $data.last_refresh }
 
         $expDate = $null
-        if ($jwt.exp) {
-            $expDate = [datetimeoffset]::FromUnixTimeSeconds($jwt.exp).LocalDateTime
+        if ($subUntil -is [int] -or $subUntil -is [long] -or $subUntil -is [double]) {
+            $expDate = [datetimeoffset]::FromUnixTimeSeconds([long]$subUntil).LocalDateTime
+        } elseif ($subUntil) {
+            $expDate = $subUntil -as [datetime]
         }
 
         return [PSCustomObject]@{
