@@ -58,13 +58,6 @@ function Get-AccountInfo($authPath) {
             "$($Matches[1]) $($Matches[2])"
         } else { $data.last_refresh }
 
-        $expDate = $null
-        if ($subUntil -is [int] -or $subUntil -is [long] -or $subUntil -is [double]) {
-            $expDate = [datetimeoffset]::FromUnixTimeSeconds([long]$subUntil).LocalDateTime
-        } elseif ($subUntil) {
-            $expDate = $subUntil -as [datetime]
-        }
-
         return [PSCustomObject]@{
             Email     = $jwt.email
             Name      = $jwt.name
@@ -78,7 +71,6 @@ function Get-AccountInfo($authPath) {
             SubUntil  = &$parseDate $subUntil
             Refresh   = $refresh
             Path      = $authPath
-            ExpDate   = $expDate
         }
     } catch {
         throw "[Fatal Error] State synchronization failed: Unable to parse JSON sequence at ($authPath). Details: $($_.Exception.Message)"
@@ -440,30 +432,11 @@ function Invoke-Interactive {
         # Colorize Plan
         $planColor = if ($a.Plan -like "*business*") { "$esc[38;5;205m" } else { "$esc[38;5;220m" }
         
-        $expIndicator = ""
-        if ($a.ExpDate) {
-            $now = [datetime]::Now
-            if ($a.ExpDate -lt $now) {
-                $expIndicator = "$esc[38;5;196m[Expired]$esc[0m" # Red
-            } else {
-                $ts = $a.ExpDate - $now
-                if ($ts.TotalDays -ge 1) {
-                    $days = [int][math]::Floor($ts.TotalDays)
-                    $expIndicator = "$esc[38;5;114m[${days}d]$esc[0m" # Pale Green
-                } else {
-                    $hours = [int][math]::Floor($ts.TotalHours)
-                    $expIndicator = "$esc[38;5;214m[${hours}h]$esc[0m" # Orange
-                }
-            }
-        }
-        
         $extra = ""
         if ($needsPlanCol) {
             $shortId = if ($a.AccountId) { $a.AccountId.Substring(0, [math]::Min(8, $a.AccountId.Length)) } else { "?" }
             # Use EXACT raw string without smart recognition, but pad for alignment
-            $extra = "  $planColor$($a.Plan.PadRight($maxPlanLen))$esc[0m  $esc[38;5;244m($shortId)$esc[0m  $expIndicator"
-        } else {
-            $extra = "  $expIndicator"
+            $extra = "  $planColor$($a.Plan.PadRight($maxPlanLen))$esc[0m  $esc[38;5;244m($shortId)$esc[0m"
         }
         
         $paddedEmail = $a.Email.PadRight($maxEmailLen)
